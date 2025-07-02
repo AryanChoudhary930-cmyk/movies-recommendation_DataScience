@@ -2,83 +2,93 @@ import streamlit as st
 import pickle
 import pandas as pd
 import requests
+import os
 import re
 
-# ✅ Updated OMDb API key
+# ✅ OMDb API key
 OMDB_API_KEY = "24e9c668"
 
-# ✅ Clean movie titles to improve matching on OMDb
-def clean_title(title):
-    title = re.sub(r'[^a-zA-Z0-9 ]', '', title)  # remove special characters
-    return title.strip()
+# ✅ Hugging Face URL for similarity matrix
+SIMILARITY_URL = "https://huggingface.co/datasets/aryanchoudhary01/movies-recommendation-data/resolve/main/similarity.pkl"
+SIMILARITY_FILE = "similarity.pkl"
 
-# ✅ Fetch poster from OMDb using cleaned movie title
+# ✅ Download similarity.pkl if missing
+def download_similarity():
+    with requests.get(SIMILARITY_URL, stream=True) as r:
+        r.raise_for_status()
+        with open(SIMILARITY_FILE, 'wb') as f:
+            for chunk in r.iter_content(chunk_size=8192):
+                f.write(chunk)
+
+if not os.path.exists(SIMILARITY_FILE):
+    with st.spinner("Downloading similarity matrix..."):
+        download_similarity()
+
+# ✅ Clean movie title for API search
+def clean_title(title):
+    return re.sub(r'[^a-zA-Z0-9 ]', '', title).strip()
+
+# ✅ Fetch movie poster from OMDb API
 def fetch_poster(movie_title):
     cleaned_title = clean_title(movie_title)
     url = f"http://www.omdbapi.com/?t={cleaned_title}&apikey={OMDB_API_KEY}"
-    response = requests.get(url)
-    data = response.json()
-
-    if 'Poster' in data and data['Poster'] != "N/A":
-        return data['Poster']
-    else:
-        return "https://via.placeholder.com/200x300?text=No+Image"
+    try:
+        response = requests.get(url)
+        data = response.json()
+        if data.get("Poster") and data["Poster"] != "N/A":
+            return data["Poster"]
+    except:
+        pass
+    return "https://via.placeholder.com/200x300?text=No+Image"
 
 # ✅ Recommend similar movies
 def recommend(movie):
     movie_index = movies[movies['title'] == movie].index[0]
     distances = similarity[movie_index]
-    movies_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:6]
+    movie_list = sorted(list(enumerate(distances)), reverse=True, key=lambda x: x[1])[1:6]
 
     recommended_movies = []
-    recommended_movies_posters = []
+    recommended_posters = []
 
-    for i in movies_list:
+    for i in movie_list:
         title = movies.iloc[i[0]].title
-        try:
-            poster = fetch_poster(title)
-        except Exception as e:
-            st.error(f"Error fetching poster for '{title}': {e}")
-            poster = "https://via.placeholder.com/200x300?text=Image+Not+Found"
-
+        poster = fetch_poster(title)
         recommended_movies.append(title)
-        recommended_movies_posters.append(poster)
+        recommended_posters.append(poster)
 
-    return recommended_movies, recommended_movies_posters
+    return recommended_movies, recommended_posters
 
-# ✅ Load data
-movies_dict = pickle.load(open('movies_dict.pkl', 'rb'))
-movies = pd.DataFrame(movies_dict)
-similarity = pickle.load(open('similarity.pkl', 'rb'))
+# ✅ Load movies_dict.pkl
+try:
+    with open("movies_dict.pkl", "rb") as f:
+        movies_dict = pickle.load(f)
+    movies = pd.DataFrame(movies_dict)
+except FileNotFoundError:
+    st.error("❌ Error: 'movies_dict.pkl' not found. Please upload it.")
+    st.stop()
+
+# ✅ Load similarity.pkl
+with open(SIMILARITY_FILE, "rb") as f:
+    similarity = pickle.load(f)
 
 # ✅ Streamlit UI
-st.title('🎬 Movie Recommender System')
+st.set_page_config(page_title="Movie Recommender", layout="wide")
+st.title("🎬 Movie Recommender System")
 
 selected_movie_name = st.selectbox(
-    'Select a movie to get recommendations:',
+    "Select a movie to get recommendations:",
     movies['title'].values
 )
 
-if st.button('Recommend'):
-    st.write("Fetching recommendations...")
-    names, posters = recommend(selected_movie_name)
-    st.write("Recommendations received!")
+if st.button("Recommend"):
+    with st.spinner("Fetching recommendations..."):
+        names, posters = recommend(selected_movie_name)
 
-    # Display recommendations in 5 columns
-    col1, col2, col3, col4, col5 = st.columns(5)
+    st.markdown("### 🎥 Top 5 Recommended Movies")
+    st.write("")  # spacing
 
-    with col1:
-        st.text(names[0])
-        st.image(posters[0])
-    with col2:
-        st.text(names[1])
-        st.image(posters[1])
-    with col3:
-        st.text(names[2])
-        st.image(posters[2])
-    with col4:
-        st.text(names[3])
-        st.image(posters[3])
-    with col5:
-        st.text(names[4])
-        st.image(posters[4])
+    cols = st.columns(5)
+    for i in range(5):
+        with cols[i]:
+            st.image(posters[i], use_container_width=True)
+            st.caption(names[i])
